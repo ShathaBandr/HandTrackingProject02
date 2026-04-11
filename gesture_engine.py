@@ -12,25 +12,28 @@ class GestureEngine():
 
         self.mpHands = mp.solutions.hands
         self.hands = self.mpHands.Hands(
-            static_image_mode=self.mode,
-            max_num_hands=self.maxHands,
-            model_complexity=1,
-            min_detection_confidence=self.detectionCon,
-            min_tracking_confidence=self.trackCon
+            static_image_mode=False,
+            max_num_hands=1,
+            model_complexity=0,
+            min_detection_confidence=0.3,
+            min_tracking_confidence=0.3
         )
 
         self.mpDraw = mp.solutions.drawing_utils
         self.tipIds = [4, 8, 12, 16, 20]
 
-    # ========================
     # Detect Hands
-    # ========================
     def findHands(self, img, draw=True):
+        if img is None:
+            return [], img
+
         imgRGB = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        self.results = self.hands.process(imgRGB)
 
         allHands = []
 
+        imgRGB.flags.writeable = False
+        self.results = self.hands.process(imgRGB)
+        imgRGB.flags.writeable = True
         if self.results.multi_hand_landmarks:
             for handNo, handLms in enumerate(self.results.multi_hand_landmarks):
 
@@ -47,7 +50,11 @@ class GestureEngine():
 
                 bbox = (min(xList), min(yList), max(xList), max(yList))
 
-                handType = self.results.multi_handedness[handNo].classification[0].label
+                # حماية من crash
+                if self.results.multi_handedness:
+                    handType = self.results.multi_handedness[handNo].classification[0].label
+                else:
+                    handType = "Right"
 
                 allHands.append({
                     "lmList": lmList,
@@ -60,9 +67,7 @@ class GestureEngine():
 
         return allHands, img
 
-    # ========================
     # Fingers Up
-    # ========================
     def fingersUp(self, hand):
         fingers = []
         lmList = hand["lmList"]
@@ -70,28 +75,17 @@ class GestureEngine():
 
         # Thumb
         if handType == "Right":
-            if lmList[self.tipIds[0]][1] > lmList[self.tipIds[0] - 1][1]:
-                fingers.append(1)
-            else:
-                fingers.append(0)
+            fingers.append(1 if lmList[self.tipIds[0]][1] > lmList[self.tipIds[0]-1][1] else 0)
         else:
-            if lmList[self.tipIds[0]][1] < lmList[self.tipIds[0] - 1][1]:
-                fingers.append(1)
-            else:
-                fingers.append(0)
+            fingers.append(1 if lmList[self.tipIds[0]][1] < lmList[self.tipIds[0]-1][1] else 0)
 
         # باقي الأصابع
         for id in range(1, 5):
-            if lmList[self.tipIds[id]][2] < lmList[self.tipIds[id] - 2][2]:
-                fingers.append(1)
-            else:
-                fingers.append(0)
+            fingers.append(1 if lmList[self.tipIds[id]][2] < lmList[self.tipIds[id]-2][2] else 0)
 
         return fingers
 
-    # ========================
     # Gesture Detection
-    # ========================
     def detectGesture(self, hand):
         fingers = self.fingersUp(hand)
 
@@ -108,9 +102,7 @@ class GestureEngine():
         else:
             return "Unknown"
 
-    # ========================
-    # Distance Between Points
-    # ========================
+    # Distance
     def findDistance(self, p1, p2, hand, img, draw=True):
         lmList = hand["lmList"]
 
@@ -128,20 +120,11 @@ class GestureEngine():
 
         return {
             "length": length,
-            "center": (cx, cy),
-            "points": (x1, y1, x2, y2)
+            "center": (cx, cy)
         }
 
-    # ========================
-    # Hand Speed
-    # ========================
-    def getHandSpeed(self, prev, curr):
-        return math.hypot(curr[0] - prev[0], curr[1] - prev[1])
 
-
-# ========================
 # Demo Main
-# ========================
 def main():
     cap = cv2.VideoCapture(0)
     detector = GestureEngine()
@@ -151,20 +134,25 @@ def main():
     while True:
         success, img = cap.read()
 
+        if not success:
+            print("Camera failed")
+            continue
+
         hands, img = detector.findHands(img)
 
         if hands:
             hand = hands[0]
+            lmList = hand["lmList"]
 
             gesture = detector.detectGesture(hand)
 
-            lmList = hand["lmList"]
-            x, y = lmList[8][1:]
+            if len(lmList) > 8:
+                x, y = lmList[8][1:]
 
-            cv2.putText(img, f"Gesture: {gesture}", (10,70),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,255), 2)
+                cv2.putText(img, f"Gesture: {gesture}", (10,70),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,255), 2)
 
-            cv2.circle(img, (x,y), 15, (255,0,255), cv2.FILLED)
+                cv2.circle(img, (x,y), 15, (255,0,255), cv2.FILLED)
 
         cTime = time.time()
         fps = 1/(cTime - pTime)
@@ -174,7 +162,13 @@ def main():
                     cv2.FONT_HERSHEY_PLAIN, 2, (255,0,255), 2)
 
         cv2.imshow("Shatha Gesture Engine", img)
-        cv2.waitKey(1)
+
+        if cv2.waitKey(1) & 0xFF == 27:
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
 
 if __name__ == "__main__":
     main()
